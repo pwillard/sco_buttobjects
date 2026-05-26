@@ -1,6 +1,8 @@
 # Blender Addon: SCO ButtObjects
-# Version 2.0.1
-# Author: BEAST_of_BURDEN (scottb613@yahoo.com)
+# Version 2.0.10
+# Author: BEAST_of_BURDEN (sun503@yahoo.com)
+
+# Support Page: https://github.com/pwillard/sco_buttobjects/discussions
 
 # This script is licensed under the GNU General Public License v3.
 # See the LICENSE file for more details.
@@ -8,31 +10,40 @@
 # This script incorporates code from [Distribute/BlenderBob]
 # Originally licensed under GPLv3: [https://extensions.blender.org/add-ons/distribute/]
 # Modifications and additions by [SCO ButtObjects/BEAST_of_BURDEN]
-# Incorporated "Distribute" function into this script – changed labels and buttons.
+# Incorporated "Distribute" function into this script - changed labels and buttons.
 
 import bpy
+import bmesh
 from mathutils import Vector
 from bpy.props import EnumProperty, BoolProperty, FloatVectorProperty, PointerProperty
 from bpy.types import PropertyGroup
 
-# Define the Property Group
-class SCOButtObjectsProperties(PropertyGroup):
-    use_cursor: BoolProperty(
+
+def get_obj_bounds(obj):
+    b = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    mn = [min(v[i] for v in b) for i in range(3)]
+    mx = [max(v[i] for v in b) for i in range(3)]
+    ct = [(mn[i] + mx[i]) / 2 for i in range(3)]
+    return mn, mx, ct
+
+
+class SCO_Props(PropertyGroup):
+    SCO_ucur: BoolProperty(
         name="Use Cursor",
         description="Align to 3D Cursor",
         default=False,
     )
-    align_to_origin: BoolProperty(
+    SCO_aorig: BoolProperty(
         name="Align to Origin",
         description="Align to Object Origin",
         default=False,
     )
-    cursor_position_saved: FloatVectorProperty(
-        name="Cursor Position Saved",
-        description="Saved position of the 3D cursor",
+    SCO_cpos: FloatVectorProperty(
+        name="Cursor Pos Saved",
+        description="Saved position of 3D cursor",
         default=(0.0, 0.0, 0.0)
     )
-    last_extent: EnumProperty(
+    SCO_lext: EnumProperty(
         name="Last Extent",
         items=[
             ('MIN', "Min", "Align to Minimum Extent"),
@@ -41,279 +52,319 @@ class SCOButtObjectsProperties(PropertyGroup):
         ],
         default='CTR'
     )
+    SCO_bpos: EnumProperty(
+        name="Bounds Position",
+        items=[
+            ('INSIDE', "Inside", "Align inside the active object's bounds"),
+            ('OUTSIDE', "Outside", "Align outside the active object's bounds"),
+        ],
+        default='INSIDE'
+    )
 
-# Alignment function
-def align_objects(context, axis, align_to_min, inside, use_center, use_cursor, align_to_origin, cursor_position):
-    if align_to_origin:
-        active_obj = context.active_object
-        if not active_obj:
+
+def align_objs(context, axis, aln_min, insd, use_ctr, use_cur, aorig, cpos):
+    scene = context.scene
+    pg = scene.SCO_pg
+    sel = context.selected_objects
+    act = context.active_object
+
+    if aorig:
+        if not act:
             return
-
-        origin_position = active_obj.location[axis]
-
-        for obj in context.selected_objects:
-            if obj == active_obj:
+        orig_pos = act.location[axis]
+        for o in sel:
+            if o == act:
                 continue
-            obj.location[axis] = origin_position
-        bpy.context.view_layer.update()  # Update the view layer
+            o.location[axis] = orig_pos
+        context.view_layer.update()
         return
 
-    if use_cursor:
-        cursor_position = context.scene.cursor.location[:]
-        target_position = cursor_position[axis]
+    if use_cur:
+        cur_pos = scene.cursor.location[:]
+        tgt = cur_pos[axis]
     else:
-        active_obj = context.active_object
-        if not active_obj:
+        if not act:
             return
-
-        active_bounds = [active_obj.matrix_world @ Vector(coord) for coord in active_obj.bound_box]
-        active_min = [min([v[i] for v in active_bounds]) for i in range(3)]
-        active_max = [max([v[i] for v in active_bounds]) for i in range(3)]
-        active_ctr = [(active_min[i] + active_max[i]) / 2 for i in range(3)]
-
-        if context.scene.sco_buttobjects_properties.last_extent == "MIN":
-            target_position = active_min[axis]
-        elif context.scene.sco_buttobjects_properties.last_extent == "MAX":
-            target_position = active_max[axis]
-        elif context.scene.sco_buttobjects_properties.last_extent == "CTR":
-            target_position = active_ctr[axis]
-
-    for obj in context.selected_objects:
-        if not use_cursor and obj == context.active_object:
-            continue
-
-        obj_bounds = [obj.matrix_world @ Vector(coord) for coord in obj.bound_box]
-        obj_min = [min([v[i] for v in obj_bounds]) for i in range(3)]
-        obj_max = [max([v[i] for v in obj_bounds]) for i in range(3)]
-        obj_ctr = [(obj_min[i] + obj_max[i]) / 2 for i in range(3)]
-
-        if inside:
-            if context.scene.sco_buttobjects_properties.last_extent == "MIN":
-                offset = target_position - obj_min[axis]
-            elif context.scene.sco_buttobjects_properties.last_extent == "MAX":
-                offset = target_position - obj_max[axis]
-            elif context.scene.sco_buttobjects_properties.last_extent == "CTR":
-                offset = target_position - obj_ctr[axis]
+        amin, amax, actr = get_obj_bounds(act)
+        lext = pg.SCO_lext
+        if lext == "MIN":
+            tgt = amin[axis]
+        elif lext == "MAX":
+            tgt = amax[axis]
         else:
-            if context.scene.sco_buttobjects_properties.last_extent == "MIN":
-                offset = target_position - obj_max[axis]
-            elif context.scene.sco_buttobjects_properties.last_extent == "MAX":
-                offset = target_position - obj_min[axis]
-            elif context.scene.sco_buttobjects_properties.last_extent == "CTR":
-                offset = target_position - obj_ctr[axis]
+            tgt = actr[axis]
 
-        obj.location[axis] += offset
+    for o in sel:
+        if not use_cur and o == act:
+            continue
+        omin, omax, octr = get_obj_bounds(o)
+        lext = pg.SCO_lext
 
-    bpy.context.view_layer.update()  # Update the view layer
+        if insd:
+            if lext == "MIN":
+                off = tgt - omin[axis]
+            elif lext == "MAX":
+                off = tgt - omax[axis]
+            else:
+                off = tgt - octr[axis]
+        else:
+            if lext == "MIN":
+                off = tgt - omax[axis]
+            elif lext == "MAX":
+                off = tgt - omin[axis]
+            else:
+                off = tgt - octr[axis]
 
-# Align Objects Operator
-class SCO_OT_AlignObjects(bpy.types.Operator):
-    bl_idname = "sco.align_objects"
+        o.location[axis] += off
+
+    context.view_layer.update()
+
+
+class SCO_OT_AlignObj(bpy.types.Operator):
+    bl_idname = "sco.alignobj"
     bl_label = "Align Objects"
     bl_options = {'REGISTER', 'UNDO'}
 
     axis: EnumProperty(
         name="Axis",
         items=[
-            ('0', "X", "Align along the X axis"),
-            ('1', "Y", "Align along the Y axis"),
-            ('2', "Z", "Align along the Z axis"),
+            ('0', "X", ""),
+            ('1', "Y", ""),
+            ('2', "Z", ""),
         ],
         default='0'
     )
 
-    align_to_min: BoolProperty(
-        name="Align to Min",
-        description="Align objects to the minimum bounds",
-        default=False,
-    )
-
-    inside: BoolProperty(
-        name="Inside",
-        description="Align objects inside the bounds",
-        default=False,
-    )
-
-    use_center: BoolProperty(
-        name="Use Center",
-        description="Align objects to the center bounds",
-        default=True,
-    )
-
     def execute(self, context):
-        cursor_position = context.scene.sco_buttobjects_properties.cursor_position_saved
-        use_cursor = context.scene.sco_buttobjects_properties.use_cursor
-        align_to_origin = context.scene.sco_buttobjects_properties.align_to_origin
+        scene = context.scene
+        pg = scene.SCO_pg
 
-        if self.use_center:
-            context.scene.sco_buttobjects_properties.last_extent = "CTR"
-        elif self.align_to_min:
-            context.scene.sco_buttobjects_properties.last_extent = "MIN"
-        else:
-            context.scene.sco_buttobjects_properties.last_extent = "MAX"
+        lext = pg.SCO_lext
+        use_center = lext == "CTR"
+        align_to_min = lext == "MIN"
 
-        align_objects(
-            context, int(self.axis), self.align_to_min, self.inside,
-            self.use_center, use_cursor, align_to_origin, cursor_position
+        align_objs(
+            context,
+            int(self.axis),
+            align_to_min,
+            pg.SCO_bpos == "INSIDE",
+            use_center,
+            pg.SCO_ucur,
+            pg.SCO_aorig,
+            pg.SCO_cpos
         )
-
-        # Reset properties after execution if "Ctr" is used
-        if self.use_center:
-            self.reset_properties()
 
         return {'FINISHED'}
 
-    def reset_properties(self):
-        # Reset operator properties to their default state
-        self.align_to_min = True
-        self.inside = False
-        self.use_center = False
-# Copy Scale Operator
-class SCO_OT_CopyScale(bpy.types.Operator):
-    bl_idname = "sco.copy_scale"
+
+class SCO_OT_CopyScal(bpy.types.Operator):
+    bl_idname = "sco.copyscal"
     bl_label = "Copy Scale"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        active_obj = context.active_object
-        if not active_obj:
-            self.report({'WARNING'}, "No active object found!")
+        act = context.active_object
+        if not act:
+            self.report({'WARNING'}, "No active object!")
             return {'CANCELLED'}
 
-        for obj in context.selected_objects:
-            if obj == active_obj:
-                continue
-            obj.scale = active_obj.scale
+        for o in context.selected_objects:
+            if o != act:
+                o.scale = act.scale
         return {'FINISHED'}
 
-# Copy Rotation Operator
-class SCO_OT_CopyRotation(bpy.types.Operator):
-    bl_idname = "sco.copy_rotation"
+
+class SCO_OT_CopyRot(bpy.types.Operator):
+    bl_idname = "sco.copyrot"
     bl_label = "Copy Rotation"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        active_obj = context.active_object
-        if not active_obj:
-            self.report({'WARNING'}, "No active object found!")
+        act = context.active_object
+        if not act:
+            self.report({'WARNING'}, "No active object!")
             return {'CANCELLED'}
 
-        for obj in context.selected_objects:
-            if obj == active_obj:
-                continue
-            obj.rotation_euler = active_obj.rotation_euler
+        for o in context.selected_objects:
+            if o != act:
+                o.rotation_euler = act.rotation_euler
         return {'FINISHED'}
 
-# Distribute Objects Operator
-class DistributeSelectedOperator(bpy.types.Operator):
-    """Operator to distribute selected objects evenly"""
-    bl_idname = "object.distribute_selected"
-    bl_label = "Distribute Selected"
-    
+
+class SCO_OT_Distrib(bpy.types.Operator):
+    bl_idname = "sco.distrib"
+    bl_label = "Distribute"
+
     axis: bpy.props.StringProperty()
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'OBJECT' and len(bpy.context.selected_objects) >= 3
+        return context.mode == 'OBJECT' and len(context.selected_objects) >= 3
 
     def execute(self, context):
-        selected_objects = bpy.context.selected_objects
-        selected_objects.sort(key=lambda obj: obj.location[int(self.axis)])
-        
-        first_object = selected_objects[0]
-        last_object = selected_objects[-1]
-        
-        total_distance = last_object.location[int(self.axis)] - first_object.location[int(self.axis)]
-        spacing = total_distance / (len(selected_objects) - 1)
-        
-        for i, obj in enumerate(selected_objects):
-            pos = list(obj.location)
-            pos[int(self.axis)] = first_object.location[int(self.axis)] + (i * spacing)
-            obj.location = tuple(pos)
-        
+        sel = context.selected_objects
+        sel.sort(key=lambda o: o.location[int(self.axis)])
+        first = sel[0]
+        last = sel[-1]
+
+        dist = last.location[int(self.axis)] - first.location[int(self.axis)]
+        step = dist / (len(sel) - 1)
+
+        for i, o in enumerate(sel):
+            p = list(o.location)
+            p[int(self.axis)] = first.location[int(self.axis)] + (i * step)
+            o.location = tuple(p)
+
         return {'FINISHED'}
 
-# Main Panel
-class SCO_PT_ButtObjectsPanel(bpy.types.Panel):
-    bl_label = "ButtObjects"
-    bl_idname = "SCO_PT_butt_objects_panel"
+
+class SCO_PT_Objs(bpy.types.Panel):
+    bl_label = "SCO ButtObjects"
+    bl_idname = "VIEW3D_PT_sco_buttobjects"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Item"
+    bl_order = 1
 
     @classmethod
     def poll(cls, context):
-        # Only show the panel in Object Mode
-        return context.space_data.type == 'VIEW_3D' and context.mode == 'OBJECT'
+        return context.mode == 'OBJECT'
 
     def draw(self, context):
         layout = self.layout
-        active_obj = context.active_object
+        pg = context.scene.SCO_pg
+        act = context.active_object
 
-        if active_obj:
-            layout.label(text=f"Active Object: {active_obj.name}")
-        else:
-            layout.label(text="Active Object: None")
+        layout.label(text=f"Active: {act.name if act else 'None'}")
 
-        sco_props = context.scene.sco_buttobjects_properties
+        if not pg.SCO_ucur:
+            layout.prop(pg, "SCO_aorig", text="Align Origin")
 
-        if not sco_props.use_cursor:
-            layout.prop(sco_props, "align_to_origin", text="Align to Origin")
-
-        if not sco_props.align_to_origin:
-            layout.prop(sco_props, "use_cursor", text="Align to 3D Cursor")
+        if not pg.SCO_aorig:
+            layout.prop(pg, "SCO_ucur", text="Use 3D Cursor")
 
         col = layout.column()
         col.label(text="Select Axis:")
         row = col.row(align=True)
-        row.operator(SCO_OT_AlignObjects.bl_idname, text="X").axis = '0'
-        row.operator(SCO_OT_AlignObjects.bl_idname, text="Y").axis = '1'
-        row.operator(SCO_OT_AlignObjects.bl_idname, text="Z").axis = '2'
+        row.operator("sco.alignobj", text="X").axis = '0'
+        row.operator("sco.alignobj", text="Y").axis = '1'
+        row.operator("sco.alignobj", text="Z").axis = '2'
 
-        if not sco_props.align_to_origin:
+        if not pg.SCO_aorig:
             col = layout.column()
             col.label(text="Bounds Extent:")
-            row = col.row(align=True)
-            row.operator(SCO_OT_AlignObjects.bl_idname, text="Min").align_to_min = True
-            row.operator(SCO_OT_AlignObjects.bl_idname, text="Ctr").use_center = True
-            row.operator(SCO_OT_AlignObjects.bl_idname, text="Max").align_to_min = False
+            col.prop(pg, "SCO_lext", expand=True)
 
-            if not sco_props.use_cursor:
+            if not pg.SCO_ucur:
                 col = layout.column()
-                col.label(text="Bounds Position:")
-                row = col.row(align=True)
-                row.operator(SCO_OT_AlignObjects.bl_idname, text="Inside").inside = True
-                row.operator(SCO_OT_AlignObjects.bl_idname, text="Outside").inside = False
+                col.label(text="Bounds Pos:")
+                col.prop(pg, "SCO_bpos", expand=True)
 
-        if sco_props.align_to_origin:
+        if pg.SCO_aorig:
             col = layout.column(align=True)
-            col.operator("sco.copy_scale", text="Copy Scale")
-            col.operator("sco.copy_rotation", text="Copy Rotation")
-            col.separator()  # Adds 1 lines of space
-            col.separator()  # Adds 1 lines of space
-            col.separator()  # Adds 1 lines of space
-            col.label(text="Distribute Objects (3 or more):")
+            col.operator("sco.copyscal", text="Copy Scale")
+            col.operator("sco.copyrot", text="Copy Rotation")
+            col.separator()
+            col.separator()
+            col.separator()
+            col.label(text="Distribute (3+):")
             row = col.row(align=True)
-            row.operator("object.distribute_selected", text="X").axis = "0"
-            row.operator("object.distribute_selected", text="Y").axis = "1"
-            row.operator("object.distribute_selected", text="Z").axis = "2"
+            row.operator("sco.distrib", text="X").axis = "0"
+            row.operator("sco.distrib", text="Y").axis = "1"
+            row.operator("sco.distrib", text="Z").axis = "2"
+
+
+class SCO_OT_MoveOrig(bpy.types.Operator):
+    bl_idname = "object.move_origin_to_selected"
+    bl_label = "Move Origin to Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode != 'EDIT_MESH':
+            return False
+        sel_objs = [o for o in context.objects_in_mode if o.type == 'MESH']
+        if not sel_objs:
+            return False
+        sel_count = 0
+        for o in sel_objs:
+            bm = bmesh.from_edit_mesh(o.data)
+            if any(v.select for v in bm.verts) or any(e.select for e in bm.edges) or any(f.select for f in bm.faces):
+                sel_count += 1
+                if sel_count > 1:
+                    return False
+        return sel_count == 1
+
+    def execute(self, context):
+        scene = context.scene
+        orig_cur_loc = scene.cursor.location.copy()
+        edit_objs = [o for o in scene.objects if o.select_get() and o.mode == 'EDIT']
+        sel_objs = [o for o in context.objects_in_mode if o.type == 'MESH']
+
+        for o in sel_objs:
+            bm = bmesh.from_edit_mesh(o.data)
+            if any(v.select for v in bm.verts) or any(e.select for e in bm.edges) or any(f.select for f in bm.faces):
+                bpy.ops.object.mode_set(mode='EDIT')
+                bpy.ops.view3d.snap_cursor_to_selected()
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+                bpy.ops.object.select_all(action='DESELECT')
+                context.view_layer.objects.active = o
+                o.select_set(True)
+                bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+                scene.cursor.location = orig_cur_loc
+                break
+
+        for eo in edit_objs:
+            eo.select_set(True)
+            context.view_layer.objects.active = eo
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        return {'FINISHED'}
+
+
+class SCO_PT_ObjsEdit(bpy.types.Panel):
+    bl_label = "SCO ButtObjects"
+    bl_idname = "VIEW3D_PT_sco_buttobjects_edit"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Item"
+    bl_order = 1
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("object.move_origin_to_selected")
+
 
 classes = [
-    SCO_OT_AlignObjects, SCO_OT_CopyScale, SCO_OT_CopyRotation,
-    DistributeSelectedOperator, SCO_PT_ButtObjectsPanel, SCOButtObjectsProperties
+    SCO_OT_AlignObj,
+    SCO_OT_CopyScal,
+    SCO_OT_CopyRot,
+    SCO_OT_Distrib,
+    SCO_PT_Objs,
+    SCO_Props,
+    SCO_OT_MoveOrig,
+    SCO_PT_ObjsEdit
 ]
+
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    bpy.types.Scene.sco_buttobjects_properties = PointerProperty(type=SCOButtObjectsProperties)
+    bpy.types.Scene.SCO_pg = PointerProperty(type=SCO_Props)
+
 
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    del bpy.types.Scene.sco_buttobjects_properties
+    del bpy.types.Scene.SCO_pg
+
 
 if __name__ == "__main__":
     register()

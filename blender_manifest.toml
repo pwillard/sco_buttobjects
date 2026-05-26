@@ -1,17 +1,16 @@
 schema_version = "1.0.0"
 id = "sco_buttobjects"
 name = "SCO ButtObjects"
-version = "2.0.1"
+version = "2.0.10"
 tagline = "Easily align Objects in your scene by Active Object or 3D Cursor"
-maintainer = "BEAST_of_BURDEN"
+maintainer = "BEAST_of_BURDEN <sun503@yahoo.com>"
 type = "add-on"
-website = "https://your-support-website.com"
+website = "https://github.com/pwillard/sco_buttobjects/discussions"
 
 category = "Object"
 
 # Blender version support
 blender_version_min = "4.2.0"
-blender_version_max = "5.1.0"
 
 # License information
 license = [
@@ -20,4 +19,3 @@ license = [
 
 # Tags (optional, but useful)
 tags = ["Object"]
-
